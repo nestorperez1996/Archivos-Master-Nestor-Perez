@@ -1,0 +1,157 @@
+
+SELECT * FROM dbo.Affiliated_Outlets
+SELECT * FROM dbo.DeliveryDay
+SELECT * FROM dbo.OosDay
+SELECT * FROM Product
+SELECT * FROM RouteDay
+SELECT * FROM [SalesDay (1)]
+
+    SUM(S.Sales_Uds) AS Sales_Uds, -- Listo
+    SUM(D.Delivery_Uds) AS Delivery_Uds, -- Listo
+    MAX(O.Oos_DAY) AS Last_OOS_Day 
+
+ALTER TABLE dbo.OosDAY
+ALTER COLUMN Oos_DAY INT; -- Aquí se convirtio el tipo de de dato, de varchar a INT.
+
+--Este tiene la suma de todos los productos pero no tiene fecha. Van desde el mes de Marzo hasta octubre con un total de 8 meses.
+Select SUM( DLV.Delivery_Uds) AS TotalSales
+		,DLV.Product_Code
+		,afo.Affiliated_Code
+		,afo.Affiliated_NAME
+		,afo.Management_Cluster
+		,afo.Engage
+		,afo.POSTALCODE
+		,dlv.Delivery_DAY
+		--,prod.SIZE
+from dbo.Affiliated_Outlets AS AFO
+	inner join dbo.DeliveryDay AS DLV
+	on afo.Affiliated_Code = dlv.Affiliated_Code
+	inner join dbo.OoSDay AS OSD
+	on afo.Affiliated_Code = osd.Affiliated_Code
+	--inner join dbo.Product AS PROD
+	--ON OSD.Product_Code = Prod.Product_Code
+	group by DLV.Product_Code, AFO.Affiliated_Code, Affiliated_NAME, afo.Management_Cluster, afo.Engage, afo.POSTALCODE,dlv.Delivery_DAY --prod.SIZE
+
+Select SUM( DLV.Delivery_Uds) AS TotalSales
+		,DLV.Product_Code
+		,afo.Affiliated_Code
+		,afo.Affiliated_NAME
+		,afo.Management_Cluster
+		,afo.Engage
+		,afo.POSTALCODE
+		,dlv.Delivery_DAY
+		--,prod.SIZE
+from dbo.Affiliated_Outlets AS AFO
+	inner join dbo.DeliveryDay AS DLV
+	on afo.Affiliated_Code = dlv.Affiliated_Code
+	inner join dbo.OoSDay AS OSD
+	on afo.Affiliated_Code = osd.Affiliated_Code
+	--inner join dbo.Product AS PROD
+	--ON OSD.Product_Code = Prod.Product_Code
+	group by DLV.Product_Code, AFO.Affiliated_Code, Affiliated_NAME, afo.Management_Cluster, afo.Engage, afo.POSTALCODE,dlv.Delivery_DAY
+
+	INNER JOIN dbo.OoSDay AS OSD
+    ON afo.Affiliated_Code = osd.Affiliated_Code
+   AND dlv.Product_Code = osd.Product_Code
+
+
+
+
+Select distinct *
+from dbo.Affiliated_Outlets AS AFO
+	Inner join dbo.DeliveryDay AS DLV
+	on afo.Affiliated_Code = dlv.Affiliated_Code
+	--inner join dbo.OoSDay as OSD
+	--on dlv.Affiliated_Code = OSD.Affiliated_Code
+
+Select distinct dlv.Delivery_DAY
+from dbo.Affiliated_Outlets AS AFO
+	Inner join dbo.DeliveryDay AS DLV
+	on afo.Affiliated_Code = dlv.Affiliated_Code
+-- Codigo para dejar unicos y mirar si no hay errores de numeros en la columna delivery_uds para sarlo de varchar a entero
+--Empieza por el mes 3 hasta el mes 10 del año 2015, es decir tenemos un muestra de 8 meses.
+
+
+SELECT 
+    SUM(DLV.Delivery_Uds) AS TotalSales,
+    DLV.Product_Code,
+    AFO.Affiliated_Code,
+    AFO.Affiliated_NAME,
+    AFO.Management_Cluster,
+    AFO.Engage,
+    AFO.POSTALCODE,
+    DLV.Delivery_DAY,
+    PROD.SIZE
+FROM dbo.Affiliated_Outlets AS AFO
+INNER JOIN dbo.DeliveryDay AS DLV
+    ON AFO.Affiliated_Code = DLV.Affiliated_Code
+-- Unión con OoSDay ajustada para evitar duplicados
+INNER JOIN dbo.OoSDay AS OSD
+    ON AFO.Affiliated_Code = OSD.Affiliated_Code
+    AND DLV.Product_Code = OSD.Product_Code
+-- Unión con Product para complementar con información del producto
+LEFT JOIN dbo.Product AS PROD
+    ON DLV.Product_Code = PROD.Product_Code
+GROUP BY 
+    DLV.Product_Code,
+    AFO.Affiliated_Code,
+    AFO.Affiliated_NAME,
+    AFO.Management_Cluster,
+    AFO.Engage,
+    AFO.POSTALCODE,
+    DLV.Delivery_DAY,
+    PROD.SIZE
+ORDER BY 
+    AFO.Affiliated_Code,
+    DLV.Product_Code,
+    DLV.Delivery_DAY;
+
+
+
+CREATE OR ALTER VIEW dbo.vw_Base_Unificada AS
+SELECT 
+    S.Sales_DAY,
+    S.Affiliated_Code,
+    A.Affiliated_NAME,
+    A.POSTALCODE,
+    A.Management_Cluster,
+    A.Engage,
+    D.Delivery_DAY,
+    S.Product_Code,
+    P.[Format],
+    P.SIZE,
+    R.Route_day,
+    SUM(S.Sales_Uds) AS Sales_Uds,
+    SUM(D.Delivery_Uds) AS Delivery_Uds,
+    MAX(O.Oos_DAY) AS Last_OOS_Day
+FROM dbo.[SalesDay (1)] AS S
+LEFT JOIN dbo.Affiliated_Outlets AS A
+    ON S.Affiliated_Code = A.Affiliated_Code
+LEFT JOIN dbo.Product AS P
+    ON S.Product_Code = P.Product_Code
+LEFT JOIN dbo.DeliveryDay AS D
+    ON S.Affiliated_Code = D.Affiliated_Code
+    AND S.Product_Code = D.Product_Code
+    AND S.Sales_DAY = D.Delivery_DAY
+LEFT JOIN dbo.OosDay AS O
+    ON S.Affiliated_Code = O.Affiliated_Code
+    AND S.Product_Code = O.Product_Code
+LEFT JOIN dbo.RouteDay AS R
+    ON S.Affiliated_Code = R.Affiliated_Code
+    AND S.Sales_DAY = R.Route_day
+GROUP BY 
+    S.Sales_DAY,
+    S.Affiliated_Code,
+    A.Affiliated_NAME,
+    A.POSTALCODE,
+    A.Management_Cluster,
+    A.Engage,
+    D.Delivery_DAY,
+    S.Product_Code,
+    P.[Format],
+    P.SIZE,
+    R.Route_day;
+
+
+select *
+from dbo.vw_Base_Unificada
