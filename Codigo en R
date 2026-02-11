@@ -1,0 +1,236 @@
+str(Base_final)
+summary(Base_final)
+library(dplyr)
+library(tidyverse)
+
+#Convertimos a Managemente_Cluster en factor.
+Base_final$Management_Cluster <- as.factor(Base_final$Management_Cluster)
+Base_final$Engage <- as.factor(Base_final$Engage)
+Base_final$Delivery_Uds[Base_final$Delivery_Uds == "NULL"] <- NA
+
+df <- Base_final
+
+df <- df %>%
+  mutate(
+    # 1) Asegurar que están como texto
+    Delivery_Uds = as.character(Delivery_Uds),
+    Sales_Uds    = as.character(Sales_Uds)
+  ) %>%
+  mutate(
+    # 2) Limpiar marcadores raros y pasarlos a NA
+    Delivery_Uds = na_if(Delivery_Uds, "NULL"),
+    Delivery_Uds = na_if(Delivery_Uds, ""),
+    Sales_Uds    = na_if(Sales_Uds, "NULL"),
+    Sales_Uds    = na_if(Sales_Uds, ""),
+    
+    # 3) Convertir a numérico
+    Delivery_Uds = as.numeric(Delivery_Uds),
+    Sales_Uds    = as.numeric(Sales_Uds)
+  )
+
+str(df$Delivery_Uds)
+str(df$Sales_Uds)
+
+summary(Base_final)
+
+##Transformar las fechas a formato date.
+df <- df %>%
+  mutate(
+    Sales_DAY    = ymd(Sales_DAY),
+    Delivery_DAY = if_else(is.na(Delivery_DAY), NA_Date_, ymd(Delivery_DAY)),
+    Route_day    = if_else(is.na(Route_day),   NA_Date_, ymd(Route_day)),
+    Last_OOS_Day = if_else(is.na(Last_OOS_Day), NA_Date_, ymd(Last_OOS_Day))
+  ) %>%
+  mutate(
+    dow        = wday(Sales_DAY, label = TRUE, week_start = 1),   # día semana (lun–dom)
+    is_weekend = dow %in% c("Sat", "Sun"),
+    month      = month(Sales_DAY, label = TRUE),
+    week       = isoweek(Sales_DAY)
+  )
+
+
+##Convertimos las variables categóricas a factor.
+df <- df %>%
+  mutate(
+    Affiliated_Code  = as.factor(Affiliated_Code),
+    Affiliated_NAME  = as.factor(Affiliated_NAME),
+    Management_Cluster = as.factor(Management_Cluster),
+    Engage           = as.factor(Engage),
+    Product_Code     = as.factor(Product_Code),
+    Format           = as.factor(Format),
+    POSTALCODE       = as.factor(POSTALCODE)
+  )
+
+##Crear variables indicadoras de disponibilidad de datos.
+df <- df %>%
+  mutate(
+    has_delivery   = !is.na(Delivery_DAY),
+    has_route      = !is.na(Route_day),
+    has_oos        = !is.na(Last_OOS_Day),
+    has_deliv_uds  = !is.na(Delivery_Uds)
+  )
+
+##Crear variables indicadoras de devoluciones y variables limpias de unidades vendidas y entregadas.
+df <- df %>%
+  mutate(
+    is_return_sales   = Sales_Uds < 0,
+    is_return_deliv   = Delivery_Uds < 0,
+    Sales_Uds_clean   = if_else(Sales_Uds < 0, -Sales_Uds, Sales_Uds),
+    Delivery_Uds_clean = if_else(!is.na(Delivery_Uds) & Delivery_Uds < 0,
+                                 -Delivery_Uds, Delivery_Uds)
+  )
+
+##Crear variable de diferencia en días entre la última fecha de OOS y la fecha de venta.
+df <- df %>%
+  mutate(
+    oos_diff_days_raw = as.numeric(difftime(Sales_DAY, Last_OOS_Day, units = "days")),
+    oos_diff_days = if_else(oos_diff_days_raw >= 0, oos_diff_days_raw, NA_real_)
+  )
+
+
+##7. Definir el universo de modelado (filtrar tiendas/productos con suficiente historia)
+## Para un modelo serio, no queremos tiendas o productos con 2 días de datos. Podemos:
+
+## Calcular cuántos días distintos tiene cada tienda–producto.
+
+## Filtrar un mínimo (ej. 60 o 90 días).
+
+
+# Días activos por tienda y producto
+historia_tp <- df %>%
+  group_by(Affiliated_Code, Product_Code) %>%
+  summarise(
+    n_days = n_distinct(Sales_DAY),
+    .groups = "drop"
+  )
+
+# Definir un mínimo de días (ajusta según lo que quieras)
+umbral_dias <- 60
+
+
+# Filtrar sólo las combinaciones que cumplen el mínimo.
+valid_tp <- historia_tp %>%
+  filter(n_days >= umbral_dias)
+
+# Filtrar la base sólo a esas combinaciones
+df_model <- df %>%
+  semi_join(valid_tp, by = c("Affiliated_Code", "Product_Code"))
+
+
+##8. Agregar datos a nivel diario por tienda–producto
+df_daily <- df_model %>%
+  group_by(Affiliated_Code, Product_Code, Sales_DAY, dow, is_weekend, month, week,
+           Management_Cluster, Engage, Format) %>%
+  summarise(
+    Sales_Uds = sum(Sales_Uds_clean, na.rm = TRUE),
+    has_delivery = any(has_delivery),
+    has_oos      = any(has_oos),
+    .groups = "drop"
+  )
+
+# Partimos de df_daily ya con Sales_Uds, Delivery_Uds_clean, etc.
+df_daily <- df_daily %>%
+  mutate(
+    # Variables de calendario
+    dow        = factor(wday(Sales_DAY, label = TRUE, week_start = 1)),  # Lun–Dom
+    is_weekend = dow %in% c("Sat", "Sun"),
+    month_num  = month(Sales_DAY),                                       # 1–12 numérico
+    week       = isoweek(Sales_DAY),
+    
+    # Aseguramos factores de negocio
+    Management_Cluster = factor(Management_Cluster),
+    Engage             = factor(Engage),
+    Format             = factor(Format),
+    
+    # Flags simples (ajusta la lógica si lo deseas)
+    has_delivery = !is.na(Delivery_Uds_clean) & Delivery_Uds_clean > 0,
+    has_oos      = !is.na(Last_OOS_Day)
+  )
+
+
+cutoff_date <- as.Date("2015-09-15")  # la fecha de corte que definiste
+
+train <- df_daily %>%
+  filter(Sales_DAY <= cutoff_date) %>%
+  mutate(y_log = log1p(Sales_Uds))    # objetivo en log
+
+test <- df_daily %>%
+  filter(Sales_DAY > cutoff_date) %>%
+  mutate(y_log = log1p(Sales_Uds))
+
+
+
+
+# Modelo lineal
+modelo_lm <- lm(
+  y_log ~ dow + is_weekend + month_num + week +
+    Management_Cluster + Engage + Format +
+    has_delivery + has_oos,
+  data = train
+)
+
+summary(modelo_lm)
+
+# Predicción en el set de prueba
+test <- test %>%
+  mutate(
+    y_log_pred = predict(modelo_lm, newdata = test),
+    Sales_pred = expm1(y_log_pred)
+  )
+
+
+library(rpart)
+library(rpart.plot)
+
+# Modelo árbol de regresión
+modelo_tree <- rpart(
+  Sales_Uds ~ dow + is_weekend + month_num + week +
+    Management_Cluster + Engage + Format +
+    has_delivery + has_oos,
+  data   = train,
+  method = "anova",
+  control = rpart.control(
+    minbucket = 50,   # mínimo de observaciones en cada hoja
+    cp        = 0.001 # parámetro de complejidad (más chico = árbol más grande)
+  )
+)
+
+# Tabla de complejidad
+printcp(modelo_tree)
+
+# Ver el mejor cp según el error de cross-validation dentro de rpart
+best_cp <- modelo_tree$cptable[which.min(modelo_tree$cptable[,"xerror"]), "CP"]
+best_cp
+
+modelo_tree_podado <- prune(modelo_tree, cp = best_cp)
+
+
+# Predicción con el árbol original
+test$Sales_pred_tree <- predict(modelo_tree, newdata = test)
+
+# Si usas el árbol podado:
+# test$Sales_pred_tree <- predict(modelo_tree_podado, newdata = test)
+
+# Métricas de error del árbol
+rmse_tree <- rmse(test$Sales_Uds, test$Sales_pred_tree)
+mae_tree  <- mae(test$Sales_Uds, test$Sales_pred_tree)
+
+rmse_test   # del modelo lineal (ya calculado antes)
+mae_test
+rmse_tree   # del árbol
+mae_tree
+
+modelo_tree_podado$variable.importance
+# o, si no podaste:
+# modelo_tree$variable.importance
+
+library(ggplot2)
+
+ggplot(test, aes(x = Sales_Uds, y = Sales_pred)) +
+  geom_point(alpha = 0.2) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(
+    x = "Ventas reales (unidades)",
+    y = "Ventas predichas (unidades)",
+    title = "Comparación entre ventas reales y predichas"
+  )
